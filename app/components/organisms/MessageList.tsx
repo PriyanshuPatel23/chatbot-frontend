@@ -1,15 +1,15 @@
 import React, { useEffect, useRef } from 'react'
-import { ChatMessage } from '../../lib/types'
+import { ConversationEntry } from '../../lib/types'
 import { MessageBubble } from '../molecules/MessageBubble'
 import { motion } from 'framer-motion'
 
 interface MessageListProps {
-  messages: ChatMessage[]
+  messages: ConversationEntry[]
   autoScroll?: boolean
-  isTyping?: boolean
+  isLoading?: boolean
 }
 
-export const MessageList: React.FC<MessageListProps> = ({ messages, autoScroll = true, isTyping = false }) => {
+export const MessageList: React.FC<MessageListProps> = ({ messages, autoScroll = true, isLoading = false }) => {
   const ref = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
@@ -22,22 +22,35 @@ export const MessageList: React.FC<MessageListProps> = ({ messages, autoScroll =
         ref.current.scrollTo({ top: ref.current.scrollHeight, behavior: 'smooth' })
       }
     }
-  }, [messages, autoScroll, isTyping])
+  }, [messages, autoScroll, isLoading])
 
   return (
-    <div ref={ref} role="log" aria-live="polite" aria-relevant="additions" className="flex flex-col gap-3 p-3">
-      {messages.map((m) => (
-        <MessageBubble key={m.id} m={m} />
+    <div 
+      ref={ref} 
+      role="log" 
+      aria-live="polite" 
+      aria-relevant="additions" 
+      className="flex flex-col gap-3 p-4 overflow-y-auto"
+      style={{ maxHeight: 'calc(100vh - 320px)' }}
+    >
+      {messages.length === 0 && (
+        <div className="flex items-center justify-center h-full text-gray-400">
+          <p>Start the conversation...</p>
+        </div>
+      )}
+
+      {messages.map((message, idx) => (
+        <MessageBubble key={idx} message={message} />
       ))}
 
-      {isTyping && (
+      {isLoading && (
         <motion.div
           initial={{ opacity: 0, y: 10 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
           className="flex justify-start"
         >
-          <div className="max-w-[82%] rounded-2xl px-4 py-3 bg-surface border border-gray-100 shadow-sm">
+          <div className="max-w-[82%] rounded-2xl px-4 py-3 bg-white border border-gray-200 shadow-sm">
             <div className="flex items-center gap-1.5">
               <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
               <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />

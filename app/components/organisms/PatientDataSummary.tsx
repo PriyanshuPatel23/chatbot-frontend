@@ -1,31 +1,18 @@
 import React, { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Button } from '../atoms/Button'
+import { CollectedData } from '../../lib/types'
+import clsx from 'clsx'
 
 interface PatientDataSummaryProps {
-  answers: Record<string, unknown>
+  data: CollectedData
   completionPercentage: number
-  eligibilityStatus?: 'eligible' | 'ineligible' | 'pending'
-  onExport?: () => string
 }
 
 export function PatientDataSummary({
-  answers,
+  data,
   completionPercentage,
-  eligibilityStatus,
-  onExport
 }: PatientDataSummaryProps) {
   const [isExpanded, setIsExpanded] = useState(false)
-  const [copied, setCopied] = useState(false)
-
-  const handleExport = () => {
-    if (onExport) {
-      const data = onExport()
-      navigator.clipboard.writeText(data)
-      setCopied(true)
-      setTimeout(() => setCopied(false), 2000)
-    }
-  }
 
   const formatValue = (value: unknown): string => {
     if (Array.isArray(value)) {
@@ -42,169 +29,107 @@ export function PatientDataSummary({
 
   const getDisplayLabel = (key: string): string => {
     const labels: Record<string, string> = {
-      fullName: 'Full Name',
+      name: 'Name',
       age: 'Age',
-      gender: 'Gender',
-      pregnant: 'Pregnant/Breastfeeding',
-      height: 'Height (cm)',
+      height: 'Height',
       weight: 'Weight (kg)',
-      diagnosedConditions: 'Diagnosed Conditions',
-      diabetesType: 'Diabetes Type',
-      lastA1C: 'Last A1C Level (%)',
-      thyroidDisease: 'Thyroid Disease',
-      pancreatitisHistory: 'Pancreatitis History',
-      kidneyDisease: 'Kidney Disease',
-      gastroparesis: 'Gastroparesis',
+      bmi: 'BMI',
+      is_pregnant_breastfeeding: 'Pregnant/Breastfeeding',
+      high_risk_conditions: 'High Risk Conditions',
+      current_medical_conditions: 'Medical Conditions',
+      currently_on_glp1: 'Currently on GLP-1',
+      other_medications: 'Current Medications',
       allergies: 'Allergies',
-      weightLossAttempts: 'Previous Weight Loss Methods',
-      exerciseFrequency: 'Exercise Frequency',
-      dietPattern: 'Diet Pattern',
-      smokingStatus: 'Smoking Status',
-      alcoholUse: 'Alcohol Use',
-      currentMedications: 'Current Medications',
-      diabetesMedications: 'Diabetes Medications',
-      insulinType: 'Insulin Type',
-      bloodPressureMeds: 'Blood Pressure Meds',
-      cholesterolMeds: 'Cholesterol Meds',
-      previousGLP1: 'Previous GLP-1 Use',
-      previousGLP1Response: 'Previous GLP-1 Response',
-      primaryGoal: 'Primary Treatment Goal',
-      weightLossGoal: 'Weight Loss Goal (kg)',
-      timeline: 'Preferred Timeline',
-      injectionComfort: 'Injection Comfort Level',
-      costConcern: 'Insurance Coverage',
-      additionalInfo: 'Additional Information'
+      weight_loss_goal: 'Weight Loss Goal',
+      interested_medication: 'Interested Medication',
     }
-    return labels[key] || key
+    return labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   }
 
-  const calculateBMI = () => {
-    const weight = answers.weight as number | undefined
-    const height = answers.height as number | undefined
-    if (!weight || !height) return null
-    const bmi = weight / Math.pow(height / 100, 2)
-    return bmi.toFixed(1)
-  }
+  const displayEntries = Object.entries(data)
+    .filter(([_, value]) => value !== undefined && value !== null && value !== '')
+    .slice(0, 8)
 
-  const bmi = calculateBMI()
-  const hasAnswers = Object.keys(answers).length > 0
+  const hasMore = Object.keys(data).length > 8
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Header */}
-      <div className="p-4 border-b border-gray-100 bg-gradient-to-r from-blue-50 to-purple-50">
-        <div className="flex items-center justify-between">
-          <div>
-            <h3 className="text-sm font-semibold text-gray-800">Patient Summary</h3>
-            <p className="text-xs text-gray-600 mt-0.5">
-              {hasAnswers ? `${Object.keys(answers).length} answers provided` : 'No data yet'}
-            </p>
-          </div>
-          <button
-            onClick={() => setIsExpanded(!isExpanded)}
-            className="text-blue-600 hover:text-blue-700 text-sm font-medium transition-colors"
-            aria-expanded={isExpanded}
-          >
-            {isExpanded ? 'Hide' : 'Show'}
-          </button>
-        </div>
-
-        {/* Key Metrics */}
-        {hasAnswers && (
-          <div className="mt-3 grid grid-cols-2 gap-2">
-            {answers.age !== undefined && (
-              <div className="bg-white/60 rounded-lg px-2 py-1.5">
-                <p className="text-xs text-gray-500">Age</p>
-                <p className="text-sm font-semibold text-gray-800">{String(answers.age)} years</p>
-              </div>
-            )}
-            {bmi && (
-              <div className="bg-white/60 rounded-lg px-2 py-1.5">
-                <p className="text-xs text-gray-500">BMI</p>
-                <p className="text-sm font-semibold text-gray-800">{bmi}</p>
-              </div>
-            )}
-          </div>
-        )}
+    <motion.div
+      initial={{ opacity: 0, y: 10 }}
+      animate={{ opacity: 1, y: 0 }}
+      className="bg-white rounded-2xl p-6 shadow-md border border-gray-200"
+    >
+      <div className="flex items-center justify-between mb-4">
+        <h3 className="font-bold text-gray-800 flex items-center gap-2">
+          <span className="text-xl">👤</span>
+          Patient Data
+        </h3>
+        <span className="text-xs font-semibold text-blue-600 bg-blue-50 px-3 py-1 rounded-full">
+          {Object.keys(data).length} fields
+        </span>
       </div>
 
-      {/* Expanded Content */}
-      <AnimatePresence>
-        {isExpanded && (
-          <motion.div
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.3 }}
-            className="overflow-hidden"
-          >
-            <div className="p-4 max-h-96 overflow-y-auto">
-              {hasAnswers ? (
-                <div className="space-y-3">
-                  {Object.entries(answers).map(([key, value]) => (
-                    <div key={key} className="border-b border-gray-100 pb-2 last:border-0">
-                      <p className="text-xs font-medium text-gray-500 mb-0.5">
-                        {getDisplayLabel(key)}
-                      </p>
-                      <p className="text-sm text-gray-800">{formatValue(value)}</p>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-sm text-gray-500 text-center py-4">
-                  Start answering questions to see your data here.
-                </p>
-              )}
-            </div>
-
-            {hasAnswers && (
-              <div className="p-4 border-t border-gray-100 bg-gray-50">
-                <Button
-                  onClick={handleExport}
-                  variant="secondary"
-                  ariaLabel="Export answers to clipboard"
-                  className="w-full text-sm"
+      {Object.keys(data).length > 0 ? (
+        <>
+          <AnimatePresence>
+            <div className="space-y-3">
+              {displayEntries.map(([key, value]) => (
+                <motion.div
+                  key={key}
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  className="pb-3 border-b border-gray-100 last:border-0"
                 >
-                  {copied ? '✓ Copied to Clipboard' : '📋 Copy Answers'}
-                </Button>
-              </div>
-            )}
-          </motion.div>
-        )}
-      </AnimatePresence>
-
-      {/* Eligibility Status */}
-      {eligibilityStatus && completionPercentage === 100 && (
-        <div className={`p-4 border-t ${
-          eligibilityStatus === 'eligible'
-            ? 'bg-green-50 border-green-100'
-            : eligibilityStatus === 'ineligible'
-            ? 'bg-red-50 border-red-100'
-            : 'bg-blue-50 border-blue-100'
-        }`}>
-          <div className="flex items-center gap-2">
-            <span className="text-xl">
-              {eligibilityStatus === 'eligible' ? '✅' : eligibilityStatus === 'ineligible' ? '❌' : '⏳'}
-            </span>
-            <div>
-              <p className="text-xs font-semibold text-gray-700">Eligibility Status</p>
-              <p className={`text-sm font-medium ${
-                eligibilityStatus === 'eligible'
-                  ? 'text-green-700'
-                  : eligibilityStatus === 'ineligible'
-                  ? 'text-red-700'
-                  : 'text-blue-700'
-              }`}>
-                {eligibilityStatus === 'eligible'
-                  ? 'Preliminarily Eligible'
-                  : eligibilityStatus === 'ineligible'
-                  ? 'Not Eligible'
-                  : 'Pending Assessment'}
-              </p>
+                  <p className="text-xs font-semibold text-gray-600 mb-1">{getDisplayLabel(key)}</p>
+                  <p className="text-sm text-gray-900 break-words">{formatValue(value)}</p>
+                </motion.div>
+              ))}
             </div>
-          </div>
-        </div>
+
+            {isExpanded && (
+              Object.entries(data)
+                .filter(([_, value]) => value !== undefined && value !== null && value !== '')
+                .slice(8)
+                .map(([key, value]) => (
+                  <motion.div
+                    key={key}
+                    initial={{ opacity: 0, x: -10 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: -10 }}
+                    className="pb-3 border-b border-gray-100 last:border-0 mt-3"
+                  >
+                    <p className="text-xs font-semibold text-gray-600 mb-1">{getDisplayLabel(key)}</p>
+                    <p className="text-sm text-gray-900 break-words">{formatValue(value)}</p>
+                  </motion.div>
+                ))
+            )}
+          </AnimatePresence>
+
+          {hasMore && (
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="w-full mt-4 py-2 text-sm font-semibold text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+            >
+              {isExpanded ? '▼ Show Less' : '▶ Show More'}
+            </button>
+          )}
+        </>
+      ) : (
+        <p className="text-gray-500 text-sm">No data collected yet...</p>
       )}
-    </div>
+
+      <div className="mt-4 pt-4 border-t border-gray-200">
+        <div className="flex justify-between items-center mb-2">
+          <p className="text-xs font-semibold text-gray-700">Completion</p>
+          <p className="text-xs font-bold text-blue-600">{Math.round(completionPercentage)}%</p>
+        </div>
+        <div className="w-full bg-gray-200 rounded-full h-2">
+          <motion.div
+            animate={{ width: `${completionPercentage}%` }}
+            transition={{ duration: 0.5 }}
+            className="bg-gradient-to-r from-blue-500 to-blue-600 h-full rounded-full"
+          />
+        </div>
+      </div>
+    </motion.div>
   )
 }

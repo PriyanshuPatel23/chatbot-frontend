@@ -206,7 +206,7 @@ Q: The project fails on startup complaining about missing components that used t
 A: Confirm you’ve rebuilt the app and cleared cached build outputs: `rimraf .next` and `npm run build`. Also verify your imports do not reference deleted files.
 
 Q: I want a server to analyze responses. Where do I add that?
-A: Implement REST endpoints (e.g., `/api/eligibility/check`) on a standalone backend and ensure `useQuestionFlow` or your hook can call it via `fetch` using an `apiBase` configuration.
+A: The frontend includes Next.js server proxy routes at `/api/start-conversation` and `/api/chat` which forward to a separate backend (default `http://localhost:8000`). Set `BACKEND_URL` to change where the proxy forwards. Implement your backend endpoints (e.g., `/start-conversation`, `/chat`) and the app will call them via the proxy routes automatically.
 
 Q: I’m not a developer — how do I use this app?
 A: Start the dev server (`npm run dev`) and open the site at `http://localhost:3000`. Begin by answering the chat questions. The app shows your progress and a summary when finished. No registration or backend is needed.

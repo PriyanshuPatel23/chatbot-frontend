@@ -1,7 +1,10 @@
 'use client'
 
 import { useCallback, useEffect, useState } from 'react'
+import { useDispatch } from 'react-redux'
 import { ChatMessage } from '../lib/types'
+import { addMessage as addMessageAction, mergeCollectedData, setSession as setSessionAction, reset as resetChatState } from '../features/chat/chatSlice'
+
 import {
   getAllQuestionsSequential,
   getNextQuestion,
@@ -10,6 +13,8 @@ import {
   validateAnswer,
   Question
 } from '../faker/data'
+
+import { startConversation, sendChat } from '../lib/api'
 
 const STORAGE_KEY = 'glp1_patient_answers'
 const MESSAGES_KEY = 'glp1_chat_messages'
@@ -22,6 +27,7 @@ interface QuestionFlowState {
   categoryProgress: Record<string, number>
   assessmentComplete: boolean
   eligibilityStatus?: 'eligible' | 'ineligible' | 'pending'
+  medicalFlags?: string[]
 }
 
 const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 8)
@@ -130,14 +136,56 @@ export function useQuestionFlow() {
 
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [sessionId, setSessionId] = useState<string | undefined>(undefined)
+  const [useServer, setUseServer] = useState<boolean | null>(null)
 
-  // Save to localStorage whenever answers change
+  // Save to localStorage whenever answers or session change
   useEffect(() => {
     if (typeof window !== 'undefined' && Object.keys(state.answers).length > 0) {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state.answers))
       localStorage.setItem(MESSAGES_KEY, JSON.stringify(state.messages))
     }
-  }, [state.answers, state.messages])
+
+    if (sessionId) {
+      localStorage.setItem('glp1_session_id', sessionId)
+    }
+  }, [state.answers, state.messages, sessionId])
+
+  // Try to initialize conversation from server if available
+  useEffect(() => {
+    let mounted = true
+    ;(async () => {
+      // If storage already has a session id, prefer it
+      const stored = typeof window !== 'undefined' ? localStorage.getItem('glp1_session_id') : null
+      if (stored) setSessionId(stored)
+
+      try {
+        const res = await startConversation()
+        if (!mounted) return
+        // Use server messages if provided
+        setUseServer(true)
+        setSessionId((res as any).session_id || undefined)
+
+        // Map server conversation history to ChatMessage
+        const serverMessages = (res.conversation_history || []).map((m: any) => ({
+          id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
+          role: m.role as ChatMessage['role'],
+          text: m.content,
+          time: Date.now()
+        }))
+
+        setState(prev => ({ ...prev, messages: serverMessages, currentQuestion: prev.currentQuestion }))
+      } catch (err) {
+        // Server not available — fall back to local flow
+        setUseServer(false)
+      }
+    })()
+
+    return () => { mounted = false }
+  }, [])
+
+
+  const dispatch = useDispatch()
 
   const pushMessage = useCallback((role: ChatMessage['role'], text: string, metadata?: Record<string, unknown>) => {
     const m: ChatMessage = {
@@ -148,8 +196,16 @@ export function useQuestionFlow() {
       metadata
     }
     setState(prev => ({ ...prev, messages: [...prev.messages, m] }))
+
+    // Also push to redux store for global visibility
+    try {
+      dispatch(addMessageAction({ role, content: text, timestamp: new Date(m.time).toISOString() }))
+    } catch (e) {
+      // ignore if dispatch not available
+    }
+
     return m
-  }, [])
+  }, [dispatch])
 
   const parseAnswer = useCallback((text: string, question: Question): unknown => {
     const lowerText = text.toLowerCase().trim()
@@ -200,29 +256,89 @@ export function useQuestionFlow() {
       setError(null)
       setLoading(true)
 
-      try {
-        // Add user message
-        pushMessage('user', text)
+      // Add user message locally (optimistic)
+      pushMessage('user', text)
 
-        // Simulate processing delay for better UX
-        await new Promise(resolve => setTimeout(resolve, 500))
+      // Parse and validate as before
+      const answer = parseAnswer(text, state.currentQuestion)
+      const validation = validateAnswer(state.currentQuestion, answer)
+      if (!validation.valid) {
+        pushMessage('assistant', `⚠️ ${validation.error}\n\nPlease try again: ${state.currentQuestion.question}`)
+        setLoading(false)
+        return
+      }
 
-        // Parse answer
-        const answer = parseAnswer(text, state.currentQuestion)
+      // Update local answers immediately
+      const newAnswers = {
+        ...state.answers,
+        [state.currentQuestion.id]: answer
+      }
+      setState(prev => ({ ...prev, answers: newAnswers }))
 
-        // Validate answer
-        const validation = validateAnswer(state.currentQuestion, answer)
-        if (!validation.valid) {
-          pushMessage('assistant', `⚠️ ${validation.error}\n\nPlease try again: ${state.currentQuestion.question}`)
+      // If server integration is enabled, send to backend
+      if (useServer) {
+        try {
+          const conversation_history = state.messages.map(m => ({ role: m.role, content: m.text, timestamp: new Date(m.time || Date.now()).toISOString() }))
+
+          const payload = {
+            message: text,
+            conversation_history,
+            collected_data: newAnswers,
+            session_id: sessionId
+          }
+
+          const res = await sendChat(payload)
+
+          // Merge collected data from server
+          const merged = { ...newAnswers, ...res.collected_data }
+
+          // Append assistant reply
+          pushMessage('assistant', res.response)
+
+          // Update state using server values
+          setState(prev => ({
+            ...prev,
+            answers: merged,
+            completionPercentage: res.completion_percentage,
+            assessmentComplete: res.is_complete,
+            medicalFlags: res.medical_flags || prev.medicalFlags,
+            // keep eligibility logic local for now
+          }))
+
+          // If there are medical flags, surface them as assistant/system messages
+          if (Array.isArray(res.medical_flags) && res.medical_flags.length > 0) {
+            pushMessage('assistant', `⚠️ Medical flags detected: ${res.medical_flags.join(', ')}`)
+          }
+
+          // Sync to Redux
+          try {
+            dispatch(mergeCollectedData(merged))
+            if ((res as any).session_id) dispatch(setSessionAction((res as any).session_id))
+            if (Array.isArray((res as any).medical_flags) && (res as any).medical_flags.length > 0) {
+              // Use setChatStateFromServer to store flags
+              // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+              // @ts-ignore
+              dispatch({ type: 'chat/setChatStateFromServer', payload: { medical_flags: (res as any).medical_flags } })
+            }
+          } catch (e) {
+            // ignore
+          }
+
+          // Save session_id returned from server if any
+          if ((res as any).session_id) setSessionId((res as any).session_id)
+
           setLoading(false)
           return
+        } catch (err) {
+          // Fall back to local flow if server call fails
+          console.warn('Server chat failed, falling back to local flow:', err)
         }
+      }
 
-        // Store answer
-        const newAnswers = {
-          ...state.answers,
-          [state.currentQuestion.id]: answer
-        }
+      // Local fallback logic (same as previous implementation)
+      try {
+        // Simulate processing delay for better UX
+        await new Promise(resolve => setTimeout(resolve, 500))
 
         // Calculate metrics
         const bmi = calculateBMI(
@@ -231,18 +347,15 @@ export function useQuestionFlow() {
         )
 
         // Add BMI info if just calculated
-        let metadata: Record<string, unknown> | undefined
         if (bmi && state.currentQuestion.id === 'height') {
-          metadata = { bmi }
+          pushMessage('assistant', `✅ Thank you! Your BMI is ${bmi}.\n\nNext question:`, { bmi })
         }
 
-        // Get next question
         const nextQ = getNextQuestion(newAnswers)
         const completion = getCompletionPercentage(newAnswers)
         const categoryProg = getCategoryProgress(newAnswers)
         const elig = assessEligibility(newAnswers)
 
-        // Update state
         setState(prev => ({
           ...prev,
           answers: newAnswers,
@@ -253,17 +366,9 @@ export function useQuestionFlow() {
           eligibilityStatus: elig
         }))
 
-        // Send response
         if (nextQ) {
-          // Show BMI if calculated
-          if (bmi && state.currentQuestion.id === 'height') {
-            pushMessage('assistant', `✅ Thank you! Your BMI is ${bmi}.\n\nNext question:`, { bmi })
-          }
-
-          // Ask next question
           pushMessage('assistant', nextQ.question + (nextQ.helperText ? `\n\n💡 ${nextQ.helperText}` : ''))
         } else {
-          // Assessment complete
           const finalMessage = elig === 'eligible'
             ? `✅ **Assessment Complete!**\n\nBased on your responses, you appear to be preliminarily eligible for GLP-1 treatment.\n\n**Important:** This is not a prescription or medical diagnosis. A licensed healthcare provider must review your full medical history and conduct a proper evaluation.\n\nWould you like to:\n• Review your answers\n• Schedule a consultation with a healthcare provider\n• Learn more about GLP-1 medications`
             : `📋 **Assessment Complete**\n\nBased on current eligibility criteria, you may not qualify for GLP-1 treatment at this time.\n\nThis could be due to:\n• Age requirements (18+)\n• BMI criteria (27+ with comorbidity, or 30+)\n• Medical contraindications\n\nWould you like to:\n• Review your answers\n• Explore alternative treatment options\n• Speak with a healthcare provider about other possibilities`
@@ -279,7 +384,7 @@ export function useQuestionFlow() {
         setLoading(false)
       }
     },
-    [state.currentQuestion, state.answers, pushMessage, parseAnswer]
+    [state.currentQuestion, state.answers, pushMessage, parseAnswer, useServer, sessionId]
   )
 
   const reset = useCallback(() => {
@@ -322,6 +427,9 @@ export function useQuestionFlow() {
 
     setError(null)
     setLoading(false)
+
+    // Also clear redux
+    try { dispatch(resetChatState()) } catch (e) { }
   }, [])
 
   const exportAnswers = useCallback(() => {
